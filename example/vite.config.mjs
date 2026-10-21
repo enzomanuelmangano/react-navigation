@@ -18,12 +18,30 @@ const packages = pack.workspaces.flatMap((workspace) =>
     )
 );
 
+// FIXME: Type-only exports are imported as values in this file of expo-modules-core
+// It works with Metro, but we get errors for the missing exports with esbuild
+// The file has no runtime code, so we can replace it with an empty module
+const emptyExpoTypeDeclarations = {
+  name: 'empty-expo-type-declarations',
+  setup(build) {
+    build.onLoad(
+      { filter: /expo-modules-core\/build\/ts-declarations\/global\.js$/ },
+      () => ({ contents: '' })
+    );
+  },
+};
+
 export default defineConfig((env) => {
   const base = config(env);
   const conditions = ['@react-navigation/source'];
 
   return mergeConfig(base, {
     appType: 'custom',
+    optimizeDeps: {
+      esbuildOptions: {
+        plugins: [emptyExpoTypeDeclarations],
+      },
+    },
     resolve: {
       conditions,
       dedupe: [
@@ -42,6 +60,7 @@ export default defineConfig((env) => {
         esbuildOptions: {
           ...base.optimizeDeps.esbuildOptions,
           plugins: [
+            emptyExpoTypeDeclarations,
             {
               name: 'externalize-react',
               setup(build) {
@@ -69,6 +88,23 @@ export default defineConfig((env) => {
       },
     },
     plugins: [
+      {
+        name: 'expo-web-compat',
+        enforce: 'pre',
+        resolveId(source, _importer, options) {
+          // FIXME: `node:async_hooks` is imported in the web build of expo-font for server rendering
+          // It's never used in the browser, but bundling it for the browser fails with rollup
+          // So we replace it with a stub on the client
+          if (source === 'node:async_hooks' && !options.ssr) {
+            return '\0node:async_hooks';
+          }
+        },
+        load(id) {
+          if (id === '\0node:async_hooks') {
+            return 'export class AsyncLocalStorage {}';
+          }
+        },
+      },
       {
         name: 'react-native-web-import',
         enforce: 'pre',
